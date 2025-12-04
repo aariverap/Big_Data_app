@@ -12,24 +12,30 @@ app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'clave_super_secreta_12345')
 
 # Configuración MongoDB
-MONGO_URI = os.getenv('MONGO_URI')
-MONGO_DB = os.getenv('MONGO_DB')
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+MONGO_DB = os.getenv('MONGO_DB', 'big_data_db')
 MONGO_COLECCION = os.getenv('MONGO_COLECCION', 'usuario_roles')
 
-
 # Configuración ElasticSearch Cloud
-ELASTIC_CLOUD_URL       = os.getenv('ELASTIC_CLOUD_URL')
-ELASTIC_API_KEY         = os.getenv('ELASTIC_API_KEY')
-ELASTIC_INDEX_DEFAULT   = os.getenv('ELASTIC_INDEX_DEFAULT', 'index_cuentos')
+ELASTIC_CLOUD_URL = os.getenv('ELASTIC_CLOUD_URL', '')
+ELASTIC_API_KEY = os.getenv('ELASTIC_API_KEY', '')
+ELASTIC_INDEX_DEFAULT = os.getenv('ELASTIC_INDEX_DEFAULT', 'index_gacetas')
 
 # Versión de la aplicación
 VERSION_APP = "1.2.0"
-CREATOR_APP = "LuisFCG"
+CREATOR_APP = "aariverap"
 
 # Inicializar conexiones
 mongo = MongoDB(MONGO_URI, MONGO_DB)
-elastic = ElasticSearch(ELASTIC_CLOUD_URL, ELASTIC_API_KEY)
 
+# Solo inicializar Elastic si hay URL válida configurada
+elastic = None
+if ELASTIC_CLOUD_URL and ELASTIC_CLOUD_URL.strip() and ELASTIC_API_KEY:
+    try:
+        elastic = ElasticSearch(ELASTIC_CLOUD_URL, ELASTIC_API_KEY)
+    except Exception as e:
+        print(f"⚠️  Error al inicializar ElasticSearch: {e}")
+        elastic = None
 # ==================== RUTAS ====================
 @app.route('/')
 def landing():
@@ -51,6 +57,11 @@ def buscador():
 def buscar_elastic(): 
     """API para realizar búsqueda en ElasticSearch"""
     try:
+        if not elastic:
+            return jsonify({
+                'success': False,
+                'error': 'ElasticSearch no está configurado'
+            }), 503
         data = request.get_json()
         texto_buscar = data.get('texto', '').strip()
         #campo = data.get('campo', '_all') # _opciones (traidos de un select del formulario): titulo, contenido, autor, fecha_creacion
@@ -593,11 +604,10 @@ if __name__ == '__main__':
     else:
         print("❌ MongoDB Atlas: Error de conexión")
     
-    if elastic.test_connection():
+    if elastic and elastic.test_connection():
         print("✅ ElasticSearch Cloud: Conectado")
     else:
-        print("❌ ElasticSearch Cloud: Error de conexión")
+        print("⚠️  ElasticSearch Cloud: No configurado o error de conexión")
 
     # Ejecutar la aplicación (localmente para pruebas)
     app.run(debug=True, host='0.0.0.0', port=5000)
-
