@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for,jsonify, session, flash
+
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash
 from dotenv import load_dotenv
 import os
 from datetime import datetime
@@ -19,7 +20,7 @@ MONGO_COLECCION = os.getenv('MONGO_COLECCION', 'usuario_roles')
 # Configuración ElasticSearch Cloud
 ELASTIC_CLOUD_URL = os.getenv('ELASTIC_CLOUD_URL', '')
 ELASTIC_API_KEY = os.getenv('ELASTIC_API_KEY', '')
-ELASTIC_INDEX_DEFAULT = os.getenv('ELASTIC_INDEX_DEFAULT', 'index_gacetas')
+ELASTIC_INDEX_DEFAULT = 'index_gacetas'    # ✔ Tu índice real
 
 # Versión de la aplicación
 VERSION_APP = "1.2.0"
@@ -28,96 +29,82 @@ CREATOR_APP = "aariverap"
 # Inicializar conexiones
 mongo = MongoDB(MONGO_URI, MONGO_DB)
 
-# Solo inicializar Elastic si hay URL válida configurada
 elastic = None
 if ELASTIC_CLOUD_URL and ELASTIC_CLOUD_URL.strip() and ELASTIC_API_KEY:
     try:
         elastic = ElasticSearch(ELASTIC_CLOUD_URL, ELASTIC_API_KEY)
-    except Exception as e:
-        print(f"⚠️  Error al inicializar ElasticSearch: {e}")
+    except:
         elastic = None
+
 # ==================== RUTAS ====================
+
 @app.route('/')
 def landing():
-    """Landing page pública"""
     return render_template('landing.html', version=VERSION_APP, creador=CREATOR_APP)
 
 @app.route('/about')
 def about():
-    """Página About"""
     return render_template('about.html', version=VERSION_APP, creador=CREATOR_APP)
 
-#--------------rutas del buscador en elastic-inicio-------------
+# ==================== BUSCADOR ====================
+
 @app.route('/buscador')
 def buscador():
-    """Página de búsqueda pública"""
     return render_template('buscador.html', version=VERSION_APP, creador=CREATOR_APP)
 
 @app.route('/buscar-elastic', methods=['POST'])
-def buscar_elastic(): 
-    """API para realizar búsqueda en ElasticSearch"""
+def buscar_elastic():
     try:
-        # Verificar que elastic esté configurado
         if not elastic:
-            return jsonify({
-                'success': False,
-                'error': 'ElasticSearch no está configurado'
-            }), 503
-        
+            return jsonify({'success': False, 'error': 'ElasticSearch no está configurado'}), 503
+
         data = request.get_json()
         texto_buscar = data.get('texto', '').strip()
-        campo = data.get('campo', 'texto')  # Campo por defecto: texto
+        campo = data.get('campo', 'texto_completo')
         index = data.get('index', ELASTIC_INDEX_DEFAULT)
-        
+
         if not texto_buscar:
-            return jsonify({
-                'success': False,
-                'error': 'Texto de búsqueda es requerido'
-            }), 400
-        
-        # Construir query base (búsqueda por texto)
+            return jsonify({'success': False, 'error': 'Texto de búsqueda es requerido'}), 400
+
+        # ✔ Multi-match REAL sobre texto_completo y otros
         query_base = {
             "query": {
-                "match": {
-                    campo: {
-                        "query": texto_buscar,
-                        "operator": "or"  # Busca cualquiera de las palabras
-                    }
+                "multi_match": {
+                    "query": texto_buscar,
+                    "fields": [
+                        "texto_completo",
+                        "texto",
+                        "contenido",
+                        "descripcion",
+                        "*"
+                    ],
+                    "operator": "or",
+                    "type": "best_fields"
                 }
             }
         }
-        
-        # Definir agregaciones/filtros opcionales
+
+        # ✔ Agregaciones para filtros
         aggs = {
-            "documentos_por_corporacion": {
-                "terms": {
-                    "field": "corporacion",
-                    "size": 10
-                }
+            "corporaciones": {
+                "terms": {"field": "corporacion.keyword", "size": 10}
             },
-            "documentos_por_año": {
-                "terms": {
-                    "field": "año",
-                    "size": 10
-                }
+            "años": {
+                "terms": {"field": "año.keyword", "size": 15}
             }
         }
-        
-        # Ejecutar búsqueda sobre elastic
+
         resultado = elastic.buscar(
             index=index,
             query=query_base,
-            aggs=aggs,            
-            size=100
+            aggs=aggs,
+            size=200
         )
-        
+
         return jsonify(resultado)
-        
+
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 #--------------rutas del buscador en elastic-fin-------------
